@@ -30,6 +30,8 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.16.0
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -48,7 +50,8 @@ jobs:
             -auto-approve \
             -input=false \
             -var="aws_region=${{ vars.AWS_REGION }}" \
-            -var="key_name=${{ vars.KEY_NAME }}"
+            -var="key_name=${{ vars.KEY_NAME }}" \
+            -var="domain_name=${{ vars.TF_VAR_DOMAIN_NAME }}"
 
       - name: Destroy Summary
         if: always()
