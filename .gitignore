@@ -1,71 +1,51 @@
-# Node
-node_modules
-.venv
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+
+# Python generated files
 __pycache__/
+*.py[cod]
 .pytest_cache/
 
-# Build artifacts
-dist
-build
-coverage
+# Node / Next.js build output
+.next/
+dist/
+build/
+coverage/
 
 # Logs
 *.log
-
-# OS files
-.DS_Store
-
-# VS Code
-.vscode/settings.json
-
-
-*.next
-
-# TLS certificates and private keys
-*.key
-*.crt
-*.pem
-
-# Let's Encrypt
-letsencrypt/
-certs/
-*.tfplan
-
-# Terraform state, plans, and local configuration
-*.tfstate
-*.tfstate.*
-*.tfplan
-*.tfvars
-*.tfvars.json
-.terraform/
 
 # Environment variables and secrets
 .env
 .env.*
 !.env.example
 
-# Terraform
-**/.terraform/*
+# Terraform state and local files
+**/.terraform/
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.tfvars
+*.tfvars.json
 .terraform.lock.hcl
 
-# Python
-.venv/
-venv/
-__pycache__/
-*.py[cod]
-
-# SSH keys and certificates
-*.pem
+# TLS certificates and private keys
 *.key
+*.crt
+*.pem
 *.p12
 *.pfx
 id_rsa
 id_ed25519
 
-# Local development
+# Let's Encrypt
+letsencrypt/
+certs/
+
+# Editor and OS files
 .idea/
 .vscode/
 .DS_Store
