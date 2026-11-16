@@ -1,0 +1,286 @@
+version: "3.9"
+
+configs:
+
+  prometheus_config_v2:
+    file: {{ monitoring_root }}/prometheus.yml
+
+  grafana_datasource:
+    file: {{ monitoring_root }}/grafana-datasource.yml
+
+  alertmanager_config_v2:
+    file: {{ monitoring_root }}/alertmanager.yml
+
+  alert_rules_v2:
+    file: {{ monitoring_root }}/alert-rules.yml
+
+  loki_config:
+    file: {{ monitoring_root }}/loki.yml
+
+  alloy_config:
+    file: {{ monitoring_root }}/alloy.alloy
+
+services:
+
+  prometheus:
+    image: {{ prometheus_image }}
+
+    user: "0:0"
+
+    ports:
+      - target: 9090
+        published: 9090
+        protocol: tcp
+        mode: host
+
+    configs:
+      - source: prometheus_config_v2
+        target: /etc/prometheus/prometheus.yml
+        uid: "65534"
+        gid: "65534"
+        mode: 0444
+
+      - source: alert_rules_v2
+        target: /etc/prometheus/alert-rules.yml
+        uid: "65534"
+        gid: "65534"
+        mode: 0444
+
+    volumes:
+      - prometheus_data:/prometheus
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+
+    networks:
+      - monitoring-net
+
+    deploy:
+      replicas: 1
+
+      placement:
+        constraints:
+          - node.role == manager
+
+      restart_policy:
+        condition: any
+
+  loki:
+    image: {{ loki_image }}
+    user: "0:0"
+    configs:
+      - source: loki_config
+        target: /etc/loki/config.yml
+        mode: 0444
+    command:
+      - "-config.file=/etc/loki/config.yml"
+    volumes:
+      - loki_data:/loki
+    networks:
+      - monitoring-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+
+  alloy:
+    image: {{ alloy_image }}
+    user: "0:0"
+    configs:
+      - source: alloy_config
+        target: /etc/alloy/config.alloy
+        mode: 0444
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    networks:
+      - monitoring-net
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+
+  grafana:
+    image: {{ grafana_image }}
+
+    ports:
+      - target: 3000
+        published: 3001
+        protocol: tcp
+        mode: host
+
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+
+    secrets:
+      - grafana_admin_password
+
+    configs:
+      - source: grafana_datasource
+        target: /etc/grafana/provisioning/datasources/prometheus.yml
+        uid: "472"
+        gid: "472"
+        mode: 0444
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+    networks:
+      - monitoring-net
+
+    deploy:
+      replicas: 1
+
+      placement:
+        constraints:
+          - node.role == manager
+
+      restart_policy:
+        condition: any
+
+
+  node-exporter:
+    image: {{ node_exporter_image }}
+
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/host/root"
+
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+
+    ports:
+      - target: 9100
+        published: 9100
+        protocol: tcp
+        mode: host
+
+    deploy:
+      mode: global
+
+      restart_policy:
+        condition: any
+
+
+  cadvisor:
+    image: {{ cadvisor_image }}
+
+    command:
+      - "--docker_only=true"
+      - "--housekeeping_interval=15s"
+
+    ports:
+      - target: 8080
+        published: 8081
+        protocol: tcp
+        mode: host
+
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+
+    networks:
+      - monitoring-net
+
+    deploy:
+      mode: global
+
+      restart_policy:
+        condition: any
+
+  alertmanager:
+    image: {{ alertmanager_image }}
+
+    ports:
+      - target: 9093
+        published: 9093
+        protocol: tcp
+        mode: host
+
+    configs:
+      - source: alertmanager_config_v2
+        target: /etc/alertmanager/alertmanager.yml
+        uid: "65534"
+        gid: "65534"
+        mode: 0444
+
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+
+    volumes:
+      - alertmanager_data:/alertmanager
+
+    networks:
+      - monitoring-net
+
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+
+  postgres-exporter:
+    image: {{ postgres_exporter_image }}
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/nexora?sslmode=disable"
+      DATA_SOURCE_USER: postgres_exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/postgres_exporter_password
+    secrets:
+      - postgres_exporter_password
+    networks:
+      - monitoring-net
+      - nexora-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+
+networks:
+  monitoring-net:
+    driver: overlay
+
+  nexora-net:
+    external: true
+    name: nexora_nexora-net
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  alertmanager_data:
+  alloy_data:
+
+
+secrets:
+
+  grafana_admin_password:
+    external: true
+    name: nexora_grafana_admin_password
+
+  postgres_exporter_password:
+    external: true
+    name: nexora_postgres_exporter_password

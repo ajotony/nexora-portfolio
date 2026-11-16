@@ -1,0 +1,8 @@
+---
+- name: Initialize Swarm manager
+  ansible.builtin.import_tasks: manager.yml
+  when: "'manager' in group_names"
+
+- name: Initialize Swarm workers
+  ansible.builtin.import_tasks: workers.yml
+  when: "'workers' in group_names"

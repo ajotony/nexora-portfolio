@@ -1,0 +1,7 @@
+- name: Create deployment directory
+  ansible.builtin.file:
+    path: "{{ deploy_root }}"
+    state: directory
+    owner: "{{ deploy_owner }}"
+    group: "{{ deploy_group }}"
+    mode: '0755'

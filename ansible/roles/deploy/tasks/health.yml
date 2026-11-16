@@ -1,0 +1,18 @@
+- name: Check Nexora services
+  ansible.builtin.command:
+    cmd: docker stack services nexora
+  register: stack_services
+  changed_when: false
+
+- name: Show Nexora services
+  ansible.builtin.debug:
+    var: stack_services.stdout_lines
+
+- name: Check that all services have one replica
+  ansible.builtin.shell: |
+    docker stack services nexora | grep -E 'nexora_(frontend|api|worker|redis|postgres)' | grep -c '1/1'
+  register: running_services
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: running_services.stdout | int == 5

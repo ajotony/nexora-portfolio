@@ -1,0 +1,21 @@
+- name: Verify Docker CLI is installed
+  ansible.builtin.command: docker --version
+  register: docker_version
+  changed_when: false
+
+- name: Verify Docker Compose plugin is installed
+  ansible.builtin.command: docker compose version
+  register: docker_compose_version
+  changed_when: false
+
+- name: Assert Docker is installed
+  ansible.builtin.assert:
+    that:
+      - docker_version.rc == 0
+      - docker_compose_version.rc == 0
+    fail_msg: "Docker installation verification failed."
+    success_msg: "Docker Engine and Docker Compose are installed."
+
+  tags:
+  - docker
+  - verify

@@ -1,0 +1,23 @@
+---
+- name: Check Swarm state
+  ansible.builtin.command:
+    cmd: docker info --format '{{ "{{.Swarm.LocalNodeState }}" }}'
+  register: swarm_state
+  changed_when: false
+
+- name: Initialize Swarm manager
+  ansible.builtin.command:
+    cmd: docker swarm init --advertise-addr {{ ansible_default_ipv4.address }}
+  when: swarm_state.stdout != "active"
+
+- name: Verify Swarm nodes
+  ansible.builtin.command:
+    cmd: docker node ls
+  register: swarm_nodes
+  changed_when: false
+  when: "'manager' in group_names"
+
+- name: Display Swarm nodes
+  ansible.builtin.debug:
+    var: swarm_nodes.stdout_lines
+  when: "'manager' in group_names"

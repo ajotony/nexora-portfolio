@@ -1,0 +1,22 @@
+---
+- name: Get Swarm join token from manager
+  ansible.builtin.command:
+    cmd: docker swarm join-token -q worker
+  delegate_to: swarm-manager
+  register: swarm_worker_token
+  changed_when: false
+
+- name: Get manager private IP
+  ansible.builtin.set_fact:
+    swarm_manager_ip: "{{ hostvars['swarm-manager']['ansible_default_ipv4']['address'] }}"
+
+- name: Check worker Swarm state
+  ansible.builtin.command:
+    cmd: docker info --format '{{ "{{.Swarm.LocalNodeState }}" }}'
+  register: worker_swarm_state
+  changed_when: false
+
+- name: Join worker to Swarm
+  ansible.builtin.command:
+    cmd: docker swarm join --token {{ swarm_worker_token.stdout }} {{ swarm_manager_ip }}:2377
+  when: worker_swarm_state.stdout != "active"

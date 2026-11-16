@@ -1,0 +1,25 @@
+- name: Configure UAT platform
+  hosts: uat
+  become: true
+
+  roles:
+    - role: common
+      tags:
+        - common
+
+    - role: docker
+      tags:
+        - docker
+
+    - role: swarm
+      tags:
+        - swarm
+
+    - role: deploy
+      tags:
+        - deploy
+
+    - role: monitoring
+      tags:
+        - monitoring
+      when: inventory_hostname == 'swarm-manager'

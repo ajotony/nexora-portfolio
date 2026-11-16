@@ -1,0 +1,22 @@
+- name: Enable and start Docker service
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  tags:
+    - docker
+    - service
+
+- name: Gather service facts for Docker
+  ansible.builtin.service_facts:
+
+- name: verify Docker service is running
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.services['docker.service'].state == 'running'
+    fail_msg: "Docker service is not running"
+    success_msg: "Docker service is running"
+
+  tags:
+    - docker
+    - service

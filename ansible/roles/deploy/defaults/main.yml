@@ -1,0 +1,5 @@
+deploy_root: /opt/nexora
+
+deploy_owner: ubuntu
+
+deploy_group: ubuntu

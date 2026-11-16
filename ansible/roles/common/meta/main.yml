@@ -1,0 +1,7 @@
+galaxy_info:
+  author: Anthony Ajibola
+  description: Common system configuration role for Nexora
+  company: Personal Project
+  license: MIT
+
+  min_ansible_version: "2.16"

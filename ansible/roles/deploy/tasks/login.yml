@@ -1,0 +1,15 @@
+- name: Log in to Amazon ECR
+  ansible.builtin.shell: |
+    aws ecr get-login-password --region {{ aws_region }} | \
+    docker login \
+      --username AWS \
+      --password-stdin {{ aws_account_id }}.dkr.ecr.{{ aws_region }}.amazonaws.com
+  register: ecr_login
+  changed_when: "'Login Succeeded' in ecr_login.stdout"
+
+- name: Verify Amazon ECR authentication
+  ansible.builtin.assert:
+    that:
+      - ecr_login.rc == 0
+    fail_msg: "Failed to authenticate to Amazon ECR."
+    success_msg: "Successfully authenticated to Amazon ECR."

@@ -1,0 +1,92 @@
+name: Terraform Infrastructure
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - "terraform/environments/**"
+      - "terraform/modules/**"
+      - ".github/workflows/terraform.yml"
+
+  push:
+    branches:
+      - develop
+    paths:
+      - "terraform/environments/**"
+      - "terraform/modules/**"
+      - ".github/workflows/terraform.yml"
+
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Terraform environment"
+        required: true
+        default: "uat"
+        type: choice
+        options:
+          - uat
+          - prod
+
+concurrency:
+  group: terraform-uat
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    runs-on: ubuntu-22.04
+
+    env:
+      TF_VAR_key_name: ${{ vars.TF_VAR_key_name }}
+      TF_VAR_aws_region: ${{ vars.TF_VAR_aws_region }}
+      TF_VAR_domain_name: ${{ vars.TF_VAR_domain_name }}
+      TF_VAR_app_subdomain: ${{ vars.TF_VAR_app_subdomain }}
+      TF_VAR_api_subdomain: ${{ vars.TF_VAR_api_subdomain }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.0
+
+      - name: Terraform Init
+        working-directory: ./terraform/environments/uat
+        run: terraform init
+
+      - name: Terraform Format
+        working-directory: ./terraform/environments/uat
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        working-directory: ./terraform/environments/uat
+        run: terraform validate
+
+      - name: Terraform Plan
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        working-directory: ./terraform/environments/uat
+        run: terraform plan -input=false -no-color
+
+      - name: Terraform Apply
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: ./terraform/environments/uat
+        run: terraform apply -input=false -auto-approve
+
+      - name: Show Terraform Outputs
+        if: github.event_name == 'push'
+        working-directory: ./terraform/environments/uat
+        run: terraform output

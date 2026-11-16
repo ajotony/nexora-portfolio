@@ -1,0 +1,91 @@
+- name: Render Docker Stack
+  ansible.builtin.template:
+    src: docker-stack.yml.j2
+    dest: "{{ deploy_root }}/docker-stack.yml"
+    mode: "0644"
+
+- name: Deploy Docker Swarm stack
+  ansible.builtin.command:
+    cmd: "docker stack deploy --with-registry-auth -c {{ deploy_root }}/docker-stack.yml nexora"
+  register: deploy_docker_stack_deploy
+  changed_when: >-
+    'Creating service' in deploy_docker_stack_deploy.stderr or
+    'Updating service' in deploy_docker_stack_deploy.stderr
+
+- name: Wait for PostgreSQL service
+  ansible.builtin.command:
+    cmd: "docker service ps nexora_postgres --filter desired-state=running --format '{% raw %}{{.CurrentState}}{% endraw %}'"
+  register: deploy_postgres_status
+  changed_when: false
+  retries: 30
+  delay: 5
+  until:
+    - deploy_postgres_status.rc == 0
+    - deploy_postgres_status.stdout is search("Running")
+
+- name: Remove previous database migration service
+  ansible.builtin.command:
+    cmd: docker service rm nexora_migration
+  register: deploy_remove_migration
+  changed_when: deploy_remove_migration.rc == 0
+  failed_when: false
+
+- name: Run database migration
+  ansible.builtin.command:
+    cmd: >
+      docker service create
+      --detach=true
+      --name nexora_migration
+      --network nexora_nexora-net
+      --with-registry-auth
+      --restart-condition none
+      --env DB_HOST=nexora_postgres
+      --env DB_PORT={{ db_port }}
+      --env DB_USER={{ db_user }}
+      --env DB_PASSWORD={{ db_password }} 
+      --env DB_NAME={{ db_name }}
+      {{ worker_image }}
+      alembic upgrade head
+  register: deploy_migration_service
+  changed_when: true
+
+- name: Wait for database migration to complete
+  ansible.builtin.shell: |
+    status=$(docker service ps nexora_migration \
+      --format '{{ "{{.CurrentState}}" }}' \
+      --no-trunc | head -n 1)
+
+    echo "Migration status: $status"
+
+    case "$status" in
+      Complete*)
+        exit 0
+        ;;
+      Failed*|Rejected*)
+        exit 1
+        ;;
+      *)
+        exit 2
+        ;;
+    esac
+  register: deploy_migration_status
+  changed_when: false
+  failed_when: deploy_migration_status.rc == 1
+  retries: 30
+  delay: 5
+  until: deploy_migration_status.rc == 0
+
+- name: Show database migration logs
+  ansible.builtin.command:
+    cmd: "docker service logs nexora_migration"
+  register: deploy_migration_logs
+  changed_when: false
+
+- name: Display database migration result
+  ansible.builtin.debug:
+    var: deploy_migration_logs.stdout_lines
+
+- name: Remove temporary migration service
+  ansible.builtin.command:
+    cmd: "docker service rm nexora_migration"
+  changed_when: true

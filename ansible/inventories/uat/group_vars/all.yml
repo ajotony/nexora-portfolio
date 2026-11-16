@@ -1,0 +1,6 @@
+ansible_user: ubuntu
+
+timezone: Africa/Lagos
+
+docker_users:
+  - ubuntu

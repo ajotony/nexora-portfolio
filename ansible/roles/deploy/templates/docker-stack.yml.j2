@@ -1,0 +1,114 @@
+version: "3.9"
+
+services:
+
+  frontend:
+    image: {{ frontend_image }}
+    ports:
+      - "{{ frontend_port }}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    networks:
+      - nexora-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  api:
+    image: {{ api_image }}
+    ports:
+      - "{{ api_port }}:8080"
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+
+      DB_HOST: postgres
+      DB_PORT: "{{ db_port }}"
+      DB_USER: "{{ db_user }}"
+      DB_PASSWORD: "{{ db_password }}"
+      DB_NAME: "{{ db_name }}"
+
+      REDIS_HOST: redis
+      REDIS_PORT: "{{ redis_port }}"
+
+      CELERY_PUBLISHER_URL: http://celery-publisher:8090
+
+    networks:
+      - nexora-net
+
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  worker:
+    image: {{ worker_image }}
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "{{ db_port }}"
+      DB_USER: "{{ db_user }}"
+      DB_PASSWORD: "{{ db_password }}"
+      DB_NAME: "{{ db_name }}"
+
+      REDIS_HOST: redis
+      REDIS_PORT: "{{ redis_port }}"
+
+    networks:
+      - nexora-net
+
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  celery-publisher:
+    image: {{ publisher_image }}
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    networks:
+      - nexora-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - nexora-net
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: "{{ db_user }}"
+      POSTGRES_PASSWORD: "{{ db_password }}"
+      POSTGRES_DB: "{{ db_name }}"
+    networks:
+      - nexora-net
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+
+networks:
+  nexora-net:
+    driver: overlay
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,11 @@
+- name: Verify AWS CLI is installed
+  ansible.builtin.command: aws --version
+  register: aws_cli_version
+  changed_when: false
+
+- name: Assert AWS CLI is available
+  ansible.builtin.assert:
+    that:
+      - aws_cli_version.rc == 0
+    fail_msg: "AWS CLI is not installed."
+    success_msg: "AWS CLI is installed."

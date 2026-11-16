@@ -1,0 +1,15 @@
+- name: Prepare deployment directory
+  ansible.builtin.import_tasks: directories.yml
+  when: "'manager' in group_names"
+
+- name: Authenticate with Amazon ECR
+  ansible.builtin.import_tasks: login.yml
+  when: "'manager' in group_names"
+
+- name: Deploy Nexora stack
+  ansible.builtin.import_tasks: stack.yml
+  when: "'manager' in group_names"
+
+- name: Check Nexora services
+  ansible.builtin.import_tasks: health.yml
+  when: "'manager' in group_names"

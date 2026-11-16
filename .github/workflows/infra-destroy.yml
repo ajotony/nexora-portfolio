@@ -1,0 +1,58 @@
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DESTROY to confirm infrastructure deletion."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+
+jobs:
+  destroy:
+    name: Destroy Infrastructure
+
+    if: github.event.inputs.confirmation == 'DESTROY'
+
+    runs-on: ${{ vars.GHA_RUNNER }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ vars.ENVIRONMENT }}
+        run: terraform init -input=false
+
+      - name: Destroy Infrastructure
+        working-directory: terraform/environments/${{ vars.ENVIRONMENT }}
+        run: |
+          terraform destroy \
+            -auto-approve \
+            -input=false \
+            -var="aws_region=${{ vars.AWS_REGION }}" \
+            -var="key_name=${{ vars.KEY_NAME }}"
+
+      - name: Destroy Summary
+        if: always()
+        run: |
+          echo "## Infrastructure Destroy Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Environment: ${{ vars.ENVIRONMENT }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Terraform destroy completed." >> "$GITHUB_STEP_SUMMARY"

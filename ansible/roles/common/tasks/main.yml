@@ -1,0 +1,38 @@
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags:
+    - common
+    - packages
+
+- name: Install common packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+    install_recommends: false
+    force_apt_get: true
+  tags:
+    - common
+    - packages
+
+- name: Get current timezone
+  ansible.builtin.command:
+    cmd: timedatectl show --property=Timezone --value
+  register: common_current_timezone
+  changed_when: false
+  tags:
+    - common
+    - timezone
+
+- name: Set timezone
+  ansible.builtin.command:
+    cmd: timedatectl set-timezone {{ timezone }}
+  when: common_current_timezone.stdout != timezone
+  changed_when: common_current_timezone.stdout != timezone
+  tags:
+    - common
+    - timezone
+
+- name: Import verification tasks
+  ansible.builtin.import_tasks: verify.yml

@@ -1,0 +1,199 @@
+- name: Create monitoring directory
+  ansible.builtin.file:
+    path: "{{ monitoring_root }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+
+- name: Render Prometheus configuration
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: "{{ monitoring_root }}/prometheus.yml"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0644"
+
+- name: Render Loki configuration
+  ansible.builtin.template:
+    src: loki.yml
+    dest: "{{ monitoring_root }}/loki.yml"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0644"
+
+- name: Render Alloy configuration
+  ansible.builtin.template:
+    src: alloy.alloy
+    dest: "{{ monitoring_root }}/alloy.alloy"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0644"
+
+- name: Render Alertmanager configuration
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: "{{ monitoring_root }}/alertmanager.yml"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0600"
+  no_log: true
+
+- name: Render Prometheus alert rules
+  ansible.builtin.template:
+    src: alert-rules.yml.j2
+    dest: "{{ monitoring_root }}/alert-rules.yml"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0644"
+
+- name: Render Grafana datasource configuration
+  ansible.builtin.template:
+    src: grafana-datasource.yml
+    dest: "{{ monitoring_root }}/grafana-datasource.yml"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0644"
+
+- name: Check Grafana admin secret
+  ansible.builtin.command:
+    cmd: docker secret inspect nexora_grafana_admin_password
+  register: grafana_secret
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == 'swarm-manager'
+
+- name: Create temporary Grafana password file
+  ansible.builtin.copy:
+    content: "{{ grafana_admin_password }}"
+    dest: /tmp/nexora-grafana-admin-password
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - inventory_hostname == 'swarm-manager'
+    - grafana_secret.rc != 0
+  no_log: true
+
+- name: Create Grafana Docker secret
+  ansible.builtin.command:
+    cmd: docker secret create nexora_grafana_admin_password /tmp/nexora-grafana-admin-password
+  when:
+    - inventory_hostname == 'swarm-manager'
+    - grafana_secret.rc != 0
+  no_log: true
+
+- name: Remove temporary Grafana password file
+  ansible.builtin.file:
+    path: /tmp/nexora-grafana-admin-password
+    state: absent
+  when:
+    - inventory_hostname == 'swarm-manager'
+    - grafana_secret.rc != 0
+
+- name: Check PostgreSQL exporter Docker secret
+  ansible.builtin.command:
+    cmd: docker secret inspect nexora_postgres_exporter_password
+  register: postgres_exporter_secret
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == 'swarm-manager'
+
+- name: Create temporary PostgreSQL exporter password file
+  ansible.builtin.copy:
+    content: "{{ postgres_exporter_password }}"
+    dest: /tmp/nexora-postgres-exporter-password
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - inventory_hostname == 'swarm-manager'
+    - postgres_exporter_secret.rc != 0
+  no_log: true
+
+- name: Create PostgreSQL exporter Docker secret
+  ansible.builtin.command:
+    cmd: docker secret create nexora_postgres_exporter_password /tmp/nexora-postgres-exporter-password
+  when:
+    - inventory_hostname == 'swarm-manager'
+    - postgres_exporter_secret.rc != 0
+  no_log: true
+
+- name: Remove temporary PostgreSQL exporter password file
+  ansible.builtin.file:
+    path: /tmp/nexora-postgres-exporter-password
+    state: absent
+  when:
+    - inventory_hostname == 'swarm-manager'
+    - postgres_exporter_secret.rc != 0
+
+- name: Render monitoring stack
+  ansible.builtin.template:
+    src: monitoring-stack.yml.j2
+    dest: "{{ monitoring_root }}/monitoring-stack.yml"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0600"
+
+- name: Validate monitoring stack
+  ansible.builtin.command:
+    cmd: "docker stack config -c {{ monitoring_root }}/monitoring-stack.yml"
+  changed_when: false
+
+# - name: Remove existing monitoring stack
+#   ansible.builtin.command:
+#     cmd: docker stack rm monitoring
+#   register: monitoring_stack_remove
+#   changed_when: monitoring_stack_remove.rc == 0
+#   failed_when: false
+
+# - name: Wait for monitoring stack to be removed
+#   ansible.builtin.shell: |
+#     if docker stack ls --format '{% raw %}{{.Name}}{% endraw %}' | grep -qx monitoring; then
+#       exit 1
+#     fi
+#     exit 0
+#   register: monitoring_stack_removed
+#   changed_when: false
+#   retries: 30
+#   delay: 2
+#   until: monitoring_stack_removed.rc == 0
+
+# - name: Wait for monitoring network to be removed
+#   ansible.builtin.shell: |
+#     if docker network inspect monitoring_monitoring-net >/dev/null 2>&1; then
+#       exit 1
+#     fi
+#     exit 0
+#   register: monitoring_network_removed
+#   changed_when: false
+#   retries: 30
+#   delay: 2
+#   until: monitoring_network_removed.rc == 0
+
+- name: Deploy monitoring stack
+  ansible.builtin.command:
+    cmd: >
+      docker stack deploy
+      --with-registry-auth
+      --detach=true
+      -c {{ monitoring_root }}/monitoring-stack.yml
+      monitoring
+
+- name: Wait for monitoring services
+  ansible.builtin.command:
+    cmd: docker stack services monitoring --format '{% raw %}{{.Name}} {{.Replicas}}{% endraw %}'
+  register: monitoring_status
+  changed_when: false
+  retries: 30
+  delay: 5
+  until:
+    - monitoring_status.rc == 0
+    - monitoring_status.stdout is search("monitoring_prometheus 1/1")
+    - monitoring_status.stdout is search("monitoring_alertmanager 1/1")
+    - monitoring_status.stdout is search("monitoring_grafana 1/1")
+    - monitoring_status.stdout is search("monitoring_node-exporter 3/3")
+    - monitoring_status.stdout is search("monitoring_cadvisor 3/3")
+    - monitoring_status.stdout is search("monitoring_loki 1/1")
+    - monitoring_status.stdout is search("monitoring_alloy 3/3")
+    - monitoring_status.stdout is search("monitoring_postgres-exporter 1/1")

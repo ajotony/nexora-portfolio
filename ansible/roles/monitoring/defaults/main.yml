@@ -1,0 +1,13 @@
+monitoring_root: /opt/nexora-monitoring
+
+prometheus_image: prom/prometheus:v3.13.4
+grafana_image: grafana/grafana:13.2.3
+cadvisor_image: ghcr.io/google/cadvisor:0.57.0
+node_exporter_image: prom/node-exporter:v1.10.2
+alertmanager_image: prom/alertmanager:v0.29.0
+loki_image: grafana/loki:3.7.8
+alloy_image: grafana/alloy:v1.12.2
+postgres_exporter_image: quay.io/prometheuscommunity/postgres-exporter:v0.17.1
+
+grafana_admin_password: "{{ lookup('ansible.builtin.env', 'GRAFANA_ADMIN_PASSWORD') }}"
+postgres_exporter_password: "{{ lookup('ansible.builtin.env', 'POSTGRES_EXPORTER_PASSWORD') }}"

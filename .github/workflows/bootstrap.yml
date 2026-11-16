@@ -1,0 +1,54 @@
+name: Bootstrap Terraform Backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform-bootstrap:
+    name: Bootstrap Terraform Backend
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.1.0
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.8
+
+      - name: Terraform Init
+        working-directory: ./terraform/bootstrap
+        run: terraform init
+
+      - name: Terraform Format
+        working-directory: ./terraform/bootstrap
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        working-directory: ./terraform/bootstrap
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: ./terraform/bootstrap
+        run: terraform plan -out=tfplan
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-plan
+          path: ./terraform/bootstrap/tfplan
+
+      - name: Terraform Apply
+        working-directory: ./terraform/bootstrap
+        run: terraform apply -auto-approve tfplan

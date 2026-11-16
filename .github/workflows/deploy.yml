@@ -1,0 +1,215 @@
+name: Nexora Deployment
+
+on:
+  workflow_run:
+    workflows:
+      - Nexora CI
+    types:
+      - completed
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ vars.ENVIRONMENT }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+  ENVIRONMENT: ${{ vars.ENVIRONMENT }}
+
+  BACKEND_ECR_REPOSITORY: ${{ vars.BACKEND_ECR_REPOSITORY }}
+  FRONTEND_ECR_REPOSITORY: ${{ vars.FRONTEND_ECR_REPOSITORY }}
+  WORKER_ECR_REPOSITORY: ${{ vars.WORKER_ECR_REPOSITORY }}
+  PUBLISHER_ECR_REPOSITORY: ${{ vars.PUBLISHER_ECR_REPOSITORY }}
+
+  ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+
+  ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
+  ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+  ALERT_EMAIL_PASSWORD: ${{ secrets.ALERT_EMAIL_PASSWORD }}
+
+jobs:
+  deploy:
+    name: Deploy Application
+
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'develop'
+      )
+
+    runs-on: ${{ vars.GHA_RUNNER }}
+
+    steps:
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.16.0
+
+      - name: Generate Image Metadata
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          IMAGE_TAG="${ENVIRONMENT}-${SHORT_SHA}"
+
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "API_IMAGE=${ECR_REGISTRY}/${BACKEND_ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "FRONTEND_IMAGE=${ECR_REGISTRY}/${FRONTEND_ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "WORKER_IMAGE=${ECR_REGISTRY}/${WORKER_ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "PUBLISHER_IMAGE=${ECR_REGISTRY}/${PUBLISHER_ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+      - name: Install Ansible
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install ansible-core
+
+      - name: Get Terraform Outputs
+        working-directory: terraform/environments/uat
+        run: |
+          terraform init -input=false
+
+          MANAGER_INSTANCE_ID=$(terraform output -raw manager_instance_id)
+          WORKER_1_INSTANCE_ID=$(terraform output -raw worker_1_instance_id)
+          WORKER_2_INSTANCE_ID=$(terraform output -raw worker_2_instance_id)
+
+          echo "MANAGER_INSTANCE_ID=${MANAGER_INSTANCE_ID}" >> "$GITHUB_ENV"
+          echo "WORKER_1_INSTANCE_ID=${WORKER_1_INSTANCE_ID}" >> "$GITHUB_ENV"
+          echo "WORKER_2_INSTANCE_ID=${WORKER_2_INSTANCE_ID}" >> "$GITHUB_ENV"
+
+      - name: Wait for EC2 instances to be SSM Ready
+        run: |
+          INSTANCE_IDS=(
+            "${MANAGER_INSTANCE_ID}"
+            "${WORKER_1_INSTANCE_ID}"
+            "${WORKER_2_INSTANCE_ID}"
+          )
+
+          echo "Waiting for all Swarm nodes to become SSM Online..."
+
+          for i in {1..30}; do
+            ONLINE=0
+
+            for ID in "${INSTANCE_IDS[@]}"; do
+              STATUS=$(aws ssm describe-instance-information \
+                --filters "Key=InstanceIds,Values=${ID}" \
+                --query "InstanceInformationList[0].PingStatus" \
+                --output text)
+
+              echo "${ID}: ${STATUS}"
+
+              if [ "${STATUS}" = "Online" ]; then
+                ONLINE=$((ONLINE + 1))
+              fi
+            done
+
+            if [ "${ONLINE}" -eq "${#INSTANCE_IDS[@]}" ]; then
+              echo "All Swarm nodes are SSM Online."
+              exit 0
+            fi
+
+            echo "Only ${ONLINE}/${#INSTANCE_IDS[@]} nodes are ready. Waiting..."
+            sleep 10
+          done
+
+          echo "ERROR: Not all Swarm nodes became SSM Online."
+          exit 1
+
+      - name: Configure SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/nexora
+          chmod 600 ~/.ssh/nexora
+
+      - name: Verify Session Manager Plugin
+        run: |
+          command -v session-manager-plugin
+          session-manager-plugin --version
+
+      - name: Deploy with Ansible
+        working-directory: ./ansible
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+
+          DB_HOST: ${{ vars.DB_HOST }}
+          DB_PORT: ${{ vars.DB_PORT }}
+          DB_USER: ${{ vars.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ vars.DB_NAME }}
+
+          REDIS_HOST: ${{ vars.REDIS_HOST }}
+          REDIS_PORT: ${{ vars.REDIS_PORT }}
+
+          FRONTEND_PORT: ${{ vars.FRONTEND_PORT }}
+          API_PORT: ${{ vars.API_PORT }}
+
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          POSTGRES_EXPORTER_PASSWORD: ${{ secrets.POSTGRES_EXPORTER_PASSWORD }}
+
+
+        run: |
+          ansible-playbook \
+            -i inventories/uat/hosts.yml \
+            playbooks/configure.yml \
+            -e "manager_instance_id=${MANAGER_INSTANCE_ID}" \
+            -e "worker_1_instance_id=${WORKER_1_INSTANCE_ID}" \
+            -e "worker_2_instance_id=${WORKER_2_INSTANCE_ID}" \
+            -e "ec2_user=${{ vars.EC2_USER }}" \
+            -e "ssh_key=${HOME}/.ssh/nexora" \
+            -e "aws_region=${AWS_REGION}" \
+            -e "aws_account_id=${AWS_ACCOUNT_ID}" \
+            -e "deployment_environment=${ENVIRONMENT}" \
+            -e "api_image=${API_IMAGE}" \
+            -e "frontend_image=${FRONTEND_IMAGE}" \
+            -e "worker_image=${WORKER_IMAGE}" \
+            -e "publisher_image=${PUBLISHER_IMAGE}" \
+            -e "postgres_user=${POSTGRES_USER}" \
+            -e "postgres_password=${POSTGRES_PASSWORD}" \
+            -e "postgres_db=${POSTGRES_DB}" \
+            -e "db_host=${DB_HOST}" \
+            -e "db_port=${DB_PORT}" \
+            -e "db_user=${DB_USER}" \
+            -e "db_password=${DB_PASSWORD}" \
+            -e "db_name=${DB_NAME}" \
+            -e "redis_host=${REDIS_HOST}" \
+            -e "redis_port=${REDIS_PORT}" \
+            -e "frontend_port=${FRONTEND_PORT}" \
+            -e "api_port=${API_PORT}" \
+            -e "alert_email_from=${ALERT_EMAIL_FROM}" \
+            -e "alert_email_to=${ALERT_EMAIL_TO}" \
+            -e "alert_email_password=${ALERT_EMAIL_PASSWORD}"
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Nexora Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Environment: ${ENVIRONMENT}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image tag: ${IMAGE_TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API image: ${API_IMAGE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Frontend image: ${FRONTEND_IMAGE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker image: ${WORKER_IMAGE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Publisher image: ${PUBLISHER_IMAGE}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Manager: ${MANAGER_INSTANCE_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker 1: ${WORKER_1_INSTANCE_ID}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Worker 2: ${WORKER_2_INSTANCE_ID}" >> "$GITHUB_STEP_SUMMARY"
